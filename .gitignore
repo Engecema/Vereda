@@ -5,3 +5,6 @@
 *.db
 noise_private.key
 config/config.yaml
+data/
+.vereda_secret
+node_modules/

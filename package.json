@@ -4,10 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npx serve .",
+    "dev": "node server.js",
+    "start": "node server.js",
+    "lint": "node --check server.js && node --check public/app.js",
     "build": "echo 'Build Vereda concluido com sucesso'"
   },
   "dependencies": {
+    "express": "^5.3.0",
     "serve": "^14.2.3"
   }
 }

@@ -4,38 +4,438 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vereda — Rede Privada Engecema</title>
-  <style>
-    body {
-      background-color: #0d1117;
-      color: #e6edf3;
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 40px;
-    }
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-      background: #161b22;
-      padding: 30px;
-      border-radius: 8px;
-      border: 1px solid #30363d;
-    }
-    h1 { color: #d29922; }
-    .status {
-      padding: 12px;
-      background: #0d1117;
-      border-left: 4px solid #d29922;
-      margin-top: 20px;
-    }
-  </style>
+  <meta name="description" content="Painel administrativo e monitoramento da rede privada criptografada Vereda (Headscale + SQLite3) da Engecema." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>Projeto Vereda</h1>
-    <p>Rede Privada Criptografada (VPN Mesh) — Interligando o Data Center Local aos Servidores <strong>Engecema</strong></p>
-    <div class="status">
-      <strong>Status do Túnel:</strong> Estrutura base inicializada (Motor Headscale + SQLite3).
+  <div id="app-loading" class="loading-screen" role="status" aria-live="polite">
+    <div class="loading-box">
+      <p class="brand-wordmark">Vereda</p>
+      <p class="muted-text">Verificando sessão segura com o servidor Engecema...</p>
     </div>
   </div>
+
+  <!-- Autenticação (Login / Cadastro de Administrador / Esqueci Minha Senha) -->
+  <main id="auth-view" class="auth-shell hidden" aria-label="Acesso administrativo Vereda">
+    <section class="auth-panel">
+      <header class="auth-header">
+        <p class="auth-kicker">Engecema Infraestrutura</p>
+        <h1 class="auth-title">Projeto Vereda</h1>
+        <p class="auth-subtitle">Rede privada criptografada Headscale interligando o Data Center Local aos servidores VPS.</p>
+      </header>
+
+      <div id="auth-bootstrap-banner" class="notice-banner notice-warning hidden" role="status">
+        Configuração inicial detectada: cadastre o primeiro administrador para proteger o painel da rede Vereda.
+      </div>
+
+      <div id="auth-feedback" class="notice-banner hidden" role="alert" aria-live="assertive"></div>
+
+      <!-- Exibição única da Chave de Recuperação após cadastro ou redefinição -->
+      <section id="recovery-key-panel" class="recovery-panel hidden" aria-label="Chave pessoal de recuperação">
+        <h2 class="section-heading-sm">Guarde sua Chave Pessoal de Recuperação</h2>
+        <p class="muted-text">Esta chave é exibida apenas uma vez e permite redefinir sua senha caso perca o acesso.</p>
+        <pre id="issued-recovery-key" class="code-block mono"></pre>
+        <div class="button-row">
+          <button type="button" id="copy-recovery-key-btn" class="btn btn-secondary">Copiar Chave</button>
+          <button type="button" id="continue-after-recovery-btn" class="btn btn-primary">Acessar Painel</button>
+        </div>
+      </section>
+
+      <div id="auth-forms-container">
+        <div class="segmented-tabs" role="tablist" aria-label="Modo de acesso">
+          <button type="button" class="seg-tab active" data-auth-tab="login" role="tab" aria-selected="true">Entrar</button>
+          <button type="button" class="seg-tab" data-auth-tab="register" role="tab" aria-selected="false">Cadastrar Admin</button>
+          <button type="button" class="seg-tab" data-auth-tab="forgot" role="tab" aria-selected="false">Esqueci a Senha</button>
+        </div>
+
+        <!-- Formulário de Login -->
+        <form id="login-form" class="auth-form" novalidate>
+          <div class="field-group">
+            <label for="login-email">E-mail corporativo</label>
+            <input id="login-email" name="email" type="email" autocomplete="email" required />
+          </div>
+          <div class="field-group">
+            <label for="login-password">Senha de acesso</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+          </div>
+          <div class="form-actions-col">
+            <button type="submit" id="login-submit-btn" class="btn btn-primary btn-full">Entrar no Painel</button>
+            <div class="auth-links-row">
+              <button type="button" class="link-btn" data-switch-auth="forgot">Esqueci minha senha</button>
+              <button type="button" class="link-btn" data-switch-auth="register">Cadastrar administrador</button>
+            </div>
+          </div>
+        </form>
+
+        <!-- Formulário de Cadastro de Administrador -->
+        <form id="register-form" class="auth-form hidden" novalidate>
+          <div class="field-group">
+            <label for="reg-name">Nome completo</label>
+            <input id="reg-name" name="name" type="text" autocomplete="name" required />
+          </div>
+          <div class="field-group">
+            <label for="reg-email">E-mail do administrador</label>
+            <input id="reg-email" name="email" type="email" autocomplete="email" required />
+          </div>
+          <div class="field-group">
+            <label for="reg-role">Função operacional</label>
+            <input id="reg-role" name="role" type="text" value="Administrador de Rede" required />
+          </div>
+          <div id="reg-invite-group" class="field-group">
+            <label for="reg-invite">Código de convite administrativo</label>
+            <input id="reg-invite" name="inviteCode" type="text" autocomplete="off" />
+            <span class="field-hint">Solicite um código de uso único a um administrador já autenticado.</span>
+          </div>
+          <div class="field-group">
+            <label for="reg-password">Senha forte</label>
+            <input id="reg-password" name="password" type="password" autocomplete="new-password" required />
+            <span id="reg-strength-text" class="field-hint">Mínimo de 10 caracteres com maiúscula, minúscula, número e símbolo.</span>
+          </div>
+          <div class="field-group">
+            <label for="reg-confirm">Confirmar senha</label>
+            <input id="reg-confirm" name="confirmPassword" type="password" autocomplete="new-password" required />
+          </div>
+          <button type="submit" id="register-submit-btn" class="btn btn-primary btn-full">Criar Conta Administrativa</button>
+        </form>
+
+        <!-- Formulário de Esqueci Minha Senha -->
+        <form id="forgot-form" class="auth-form hidden" novalidate>
+          <div class="field-group">
+            <label for="forgot-email">E-mail cadastrado</label>
+            <input id="forgot-email" name="email" type="email" autocomplete="email" required />
+          </div>
+          <div class="field-group">
+            <label for="forgot-key">Chave Pessoal de Recuperação</label>
+            <input id="forgot-key" name="recoveryKey" type="text" autocomplete="off" required />
+            <span class="field-hint">Formato VRD-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX fornecida no cadastro.</span>
+          </div>
+          <div class="field-group">
+            <label for="forgot-new-password">Nova senha forte</label>
+            <input id="forgot-new-password" name="newPassword" type="password" autocomplete="new-password" required />
+            <span class="field-hint">Mínimo de 10 caracteres com maiúscula, minúscula, número e símbolo.</span>
+          </div>
+          <div class="field-group">
+            <label for="forgot-confirm">Confirmar nova senha</label>
+            <input id="forgot-confirm" name="confirmPassword" type="password" autocomplete="new-password" required />
+          </div>
+          <button type="submit" id="forgot-submit-btn" class="btn btn-primary btn-full">Redefinir Senha e Rotacionar Sessões</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- Painel Principal Autenticado -->
+  <div id="dashboard-view" class="dashboard-shell hidden">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a href="#sec-nodes" class="brand-wordmark">Vereda</a>
+        <nav class="topbar-nav" aria-label="Navegação principal">
+          <a href="#sec-nodes" class="nav-link">Nós da Rede</a>
+          <a href="#sec-commands" class="nav-link">Comandos</a>
+          <a href="#sec-scripts" class="nav-link">Scripts</a>
+          <a href="#sec-security" class="nav-link">Segurança</a>
+        </nav>
+        <div class="topbar-action">
+          <button type="button" id="logout-btn" class="btn btn-secondary">Encerrar Sessão</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="hero-summary" aria-label="Resumo operacional do túnel">
+        <div class="hero-copy">
+          <p class="hero-eyebrow">Engecema Rede Privada Criptografada</p>
+          <h1 class="hero-title">Monitoramento da Malha Headscale</h1>
+          <p id="tunnel-meta-line" class="hero-meta">Carregando configuração do túnel...</p>
+        </div>
+
+        <div class="kpi-strip">
+          <div class="kpi-cell">
+            <span class="kpi-label">Status do Túnel</span>
+            <strong id="kpi-tunnel-status" class="kpi-value">--</strong>
+            <span id="kpi-engine" class="kpi-sub">Headscale + SQLite3</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Nós Online</span>
+            <strong id="kpi-nodes-online" class="kpi-value mono">0 / 0</strong>
+            <span id="kpi-nodes-offline" class="kpi-sub">0 offline</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Servidor de Controle</span>
+            <strong id="kpi-server-url" class="kpi-value mono">--</strong>
+            <span id="kpi-listen-addr" class="kpi-sub">Escuta --</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Sub-rede &amp; MagicDNS</span>
+            <strong id="kpi-prefix-v4" class="kpi-value mono">--</strong>
+            <span id="kpi-base-domain" class="kpi-sub">--</span>
+          </div>
+        </div>
+      </section>
+
+      <div id="dash-feedback" class="notice-banner hidden" role="status" aria-live="polite"></div>
+
+      <!-- Seção 1: Monitoramento de Nós (VPS e Data Center Local) -->
+      <section id="sec-nodes" class="workspace-section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-heading">Nós Conectados na Rede Privada</h2>
+            <p class="section-sub">Acompanhe servidores VPS, gateways do Data Center Local e estações Windows 10.</p>
+          </div>
+          <button type="button" id="toggle-add-node-btn" class="btn btn-primary">Cadastrar Nó</button>
+        </div>
+
+        <form id="add-node-form" class="inline-panel hidden" novalidate>
+          <h3 class="panel-subheading">Provisionar Novo Nó na Malha</h3>
+          <div class="form-grid-3">
+            <div class="field-group">
+              <label for="node-hostname">Hostname do nó</label>
+              <input id="node-hostname" name="hostname" type="text" required />
+              <span class="field-hint">Apenas letras, números e hífen (ex.: dc-filial-02).</span>
+            </div>
+            <div class="field-group">
+              <label for="node-env">Ambiente</label>
+              <select id="node-env" name="environment">
+                <option value="vps">VPS Coordenadora</option>
+                <option value="datacenter">Data Center Local</option>
+                <option value="workstation">Estação Windows 10</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="node-os">Sistema Operacional</label>
+              <input id="node-os" name="os" type="text" value="Ubuntu 24.04 LTS" required />
+            </div>
+            <div class="field-group">
+              <label for="node-endpoint">Endpoint público ou identificador</label>
+              <input id="node-endpoint" name="endpoint" type="text" value="Conexão direta WireGuard" />
+            </div>
+            <div class="field-group">
+              <label for="node-route">Sub-rede anunciada (opcional)</label>
+              <input id="node-route" name="advertisedRoute" type="text" />
+              <span class="field-hint">Notação CIDR opcional (ex.: 192.168.10.0/24).</span>
+            </div>
+          </div>
+          <div class="button-row">
+            <button type="submit" class="btn btn-primary">Salvar Nó</button>
+            <button type="button" id="cancel-add-node-btn" class="btn btn-secondary">Cancelar</button>
+          </div>
+        </form>
+
+        <div class="toolbar">
+          <div class="search-wrap">
+            <label for="node-search" class="sr-only">Filtrar nós</label>
+            <input id="node-search" type="search" aria-label="Filtrar nós por hostname, IP ou sistema" />
+            <span class="field-hint">Busque por hostname, IP 100.64.x.x, sub-rede ou sistema operacional.</span>
+          </div>
+          <div class="segmented-tabs" role="group" aria-label="Filtrar por ambiente">
+            <button type="button" class="seg-tab active" data-node-filter="all">Todos</button>
+            <button type="button" class="seg-tab" data-node-filter="vps">VPS</button>
+            <button type="button" class="seg-tab" data-node-filter="datacenter">Data Center Local</button>
+            <button type="button" class="seg-tab" data-node-filter="workstation">Estações</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Nó / Ambiente</th>
+                <th>IP Privado</th>
+                <th>Rotas &amp; Endpoint</th>
+                <th>Status do Túnel</th>
+                <th class="num-col">Latência</th>
+                <th>Última Atividade</th>
+                <th class="actions-col">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="nodes-tbody"></tbody>
+          </table>
+          <div id="nodes-empty-state" class="empty-state hidden">
+            <p>Nenhum nó corresponde ao filtro aplicado.</p>
+            <button type="button" id="reset-node-filters-btn" class="btn btn-secondary">Limpar Filtros</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Seção 2: Comandos Rápidos de Conexão e Pre-Auth Keys -->
+      <section id="sec-commands" class="workspace-section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-heading">Gerador de Comandos Rápidos &amp; Chaves Pre-Auth</h2>
+            <p class="section-sub">Emita chaves criptográficas de autenticação e gere comandos prontos para VPS, Data Center Local e Windows 10.</p>
+          </div>
+        </div>
+
+        <div class="split-2col">
+          <div class="surface-panel">
+            <h3 class="panel-subheading">1. Emitir Chave Pre-Auth (Headscale)</h3>
+            <form id="preauth-form" class="stacked-form" novalidate>
+              <div class="form-grid-2">
+                <div class="field-group">
+                  <label for="key-user">Namespace / Usuário</label>
+                  <input id="key-user" name="user" type="text" value="engecema" required />
+                </div>
+                <div class="field-group">
+                  <label for="key-hours">Expiração (horas)</label>
+                  <select id="key-hours" name="expirationHours">
+                    <option value="1">1 hora</option>
+                    <option value="24" selected>24 horas</option>
+                    <option value="168">7 dias (168h)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="checkbox-row">
+                <label class="checkbox-label">
+                  <input id="key-reusable" type="checkbox" checked />
+                  <span>Chave reutilizável para múltiplos nós</span>
+                </label>
+                <label class="checkbox-label">
+                  <input id="key-ephemeral" type="checkbox" />
+                  <span>Nós efêmeros</span>
+                </label>
+              </div>
+              <button type="submit" class="btn btn-primary">Gerar Chave Pre-Auth</button>
+            </form>
+
+            <div id="generated-key-box" class="key-reveal hidden">
+              <p class="field-hint">Chave emitida (copie agora — não será exibida novamente):</p>
+              <pre id="generated-key-value" class="code-block mono"></pre>
+              <button type="button" id="copy-generated-key-btn" class="btn btn-secondary">Copiar Chave</button>
+            </div>
+
+            <div class="subtable-block">
+              <h4 class="subtable-title">Chaves Emitidas Recentemente</h4>
+              <div id="keys-list" class="keys-list"></div>
+            </div>
+          </div>
+
+          <div class="surface-panel">
+            <h3 class="panel-subheading">2. Construtor de Comandos de Conexão</h3>
+            <div class="segmented-tabs" role="group" aria-label="Tipo de comando">
+              <button type="button" class="seg-tab active" data-cmd-target="windows">Windows 10</button>
+              <button type="button" class="seg-tab" data-cmd-target="linux">Linux / VPS</button>
+              <button type="button" class="seg-tab" data-cmd-target="datacenter">Data Center Local</button>
+              <button type="button" class="seg-tab" data-cmd-target="headscale">Headscale CLI</button>
+            </div>
+
+            <div class="form-grid-2 cmd-inputs">
+              <div class="field-group">
+                <label for="cmd-hostname">Hostname do nó</label>
+                <input id="cmd-hostname" type="text" value="estacao-engecema-01" />
+              </div>
+              <div class="field-group">
+                <label for="cmd-route">Sub-rede local (para Data Center)</label>
+                <input id="cmd-route" type="text" value="192.168.10.0/24" />
+              </div>
+              <div class="field-group full-span">
+                <label for="cmd-authkey">Chave Pre-Auth aplicada ao comando</label>
+                <input id="cmd-authkey" type="text" value="" />
+                <span class="field-hint">Gere uma chave ao lado para preenchimento automático ou deixe vazio para autenticação interativa.</span>
+              </div>
+            </div>
+
+            <pre id="command-output" class="code-block mono"></pre>
+            <div class="button-row">
+              <button type="button" id="copy-command-btn" class="btn btn-primary">Copiar Comando</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Seção 3: Scripts de Automação -->
+      <section id="sec-scripts" class="workspace-section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-heading">Scripts de Provisionamento Vereda</h2>
+            <p class="section-sub">Scripts auditados para instalação do coordenador Headscale na VPS e conexão de estações Windows 10.</p>
+          </div>
+        </div>
+
+        <div class="split-2col">
+          <article class="surface-panel">
+            <h3 class="panel-subheading">VPS Ubuntu / Debian — Headscale + SQLite3</h3>
+            <p class="muted-text">Arquivo: <span class="mono">scripts/instalar_vereda_vps.sh</span> · Verifica SHA-256 do pacote oficial, aplica <span class="mono">config.yaml</span>, configura UFW e ativa o serviço systemd.</p>
+            <div class="button-row">
+              <button type="button" class="btn btn-primary" data-preview-script="instalar_vereda_vps.sh">Visualizar Script</button>
+              <button type="button" class="btn btn-secondary" data-download-script="instalar_vereda_vps.sh">Baixar .sh</button>
+            </div>
+          </article>
+
+          <article class="surface-panel">
+            <h3 class="panel-subheading">Windows 10 — Cliente Tailscale Engecema</h3>
+            <p class="muted-text">Arquivo: <span class="mono">scripts/conectar_windows.ps1</span> · Instala o cliente se necessário, grava a política de LoginURL e conecta via TLS 1.2 ao servidor Vereda.</p>
+            <div class="button-row">
+              <button type="button" class="btn btn-primary" data-preview-script="conectar_windows.ps1">Visualizar Script</button>
+              <button type="button" class="btn btn-secondary" data-download-script="conectar_windows.ps1">Baixar .ps1</button>
+            </div>
+          </article>
+        </div>
+
+        <div id="script-viewer-panel" class="surface-panel hidden">
+          <div class="section-header compact-header">
+            <h3 id="script-viewer-title" class="panel-subheading mono"></h3>
+            <div class="button-row">
+              <button type="button" id="copy-script-btn" class="btn btn-secondary">Copiar Conteúdo</button>
+              <button type="button" id="close-script-btn" class="btn btn-secondary">Fechar</button>
+            </div>
+          </div>
+          <pre id="script-viewer-content" class="code-block code-scroll mono"></pre>
+        </div>
+      </section>
+
+      <!-- Seção 4: Segurança, Administradores e Auditoria -->
+      <section id="sec-security" class="workspace-section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-heading">Segurança, Administradores &amp; Auditoria</h2>
+            <p class="section-sub">Controles ativos contra invasão, gestão de administradores autorizados e trilha de auditoria.</p>
+          </div>
+        </div>
+
+        <div class="split-2col">
+          <div class="surface-panel">
+            <h3 class="panel-subheading">Blindagem Verificada no Servidor</h3>
+            <ul id="security-checks-list" class="checks-list"></ul>
+          </div>
+
+          <div class="surface-panel">
+            <div class="section-header compact-header">
+              <h3 class="panel-subheading">Administradores Autorizados</h3>
+              <button type="button" id="generate-invite-btn" class="btn btn-primary">Gerar Convite Admin</button>
+            </div>
+            <div id="invite-result-box" class="key-reveal hidden">
+              <p class="field-hint">Convite de uso único válido por 1 hora:</p>
+              <pre id="invite-code-value" class="code-block mono"></pre>
+              <button type="button" id="copy-invite-btn" class="btn btn-secondary">Copiar Convite</button>
+            </div>
+            <div id="admins-list" class="admins-list"></div>
+          </div>
+        </div>
+
+        <div class="surface-panel audit-panel">
+          <h3 class="panel-subheading">Log de Auditoria de Segurança</h3>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Data / Hora</th>
+                  <th>Evento</th>
+                  <th>Ator</th>
+                  <th>IP</th>
+                  <th>Detalhe</th>
+                </tr>
+              </thead>
+              <tbody id="audit-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
 </body>
 </html>
