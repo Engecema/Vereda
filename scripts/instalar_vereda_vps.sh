@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # ==============================================================================
-# Projeto Vereda — Instalador Headscale (SQLite3) para VPS Ubuntu / Debian
+# Projeto Vereda — Instalador Vereda (SQLite3) para VPS Ubuntu / Debian
 # Engecema Infraestrutura
 # ==============================================================================
 
-HEADSCALE_VERSION="${HEADSCALE_VERSION:-0.23.0}"
+VEREDA_VERSION="${VEREDA_VERSION:-0.23.0}"
 VEREDA_DOMAIN="${VEREDA_DOMAIN:-engecema.com.br}"
 VEREDA_BASE_DOMAIN="${VEREDA_BASE_DOMAIN:-engecema.internal}"
 VEREDA_USER="${VEREDA_USER:-engecema}"
@@ -16,8 +16,8 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ ! "${HEADSCALE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "[ERRO] HEADSCALE_VERSION invalida: ${HEADSCALE_VERSION}" >&2
+if [[ ! "${VEREDA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "[ERRO] VEREDA_VERSION invalida: ${VEREDA_VERSION}" >&2
   exit 1
 fi
 
@@ -58,6 +58,7 @@ case "${UNAME_ARCH}" in
     ;;
 esac
 
+umask 077
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "${TMP_DIR}"
@@ -69,10 +70,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates sqlite3
 
-DEB_FILE="headscale_${HEADSCALE_VERSION}_linux_${ARCH}.deb"
-BASE_URL="https://github.com/juanfont/headscale/releases/download/v${HEADSCALE_VERSION}"
+DEB_FILE="vereda_${VEREDA_VERSION}_linux_${ARCH}.deb"
+BASE_URL="https://github.com/Engecema/Vereda/releases/download/v${VEREDA_VERSION}"
 
-echo "[2/6] Baixando Headscale v${HEADSCALE_VERSION} (${ARCH}) e verificando SHA-256..."
+echo "[2/6] Baixando Vereda v${VEREDA_VERSION} (${ARCH}) e verificando SHA-256..."
 curl -fsSL --proto '=https' --tlsv1.2 "${BASE_URL}/${DEB_FILE}" -o "${TMP_DIR}/${DEB_FILE}"
 curl -fsSL --proto '=https' --tlsv1.2 "${BASE_URL}/checksums.txt" -o "${TMP_DIR}/checksums.txt"
 
@@ -86,34 +87,35 @@ curl -fsSL --proto '=https' --tlsv1.2 "${BASE_URL}/checksums.txt" -o "${TMP_DIR}
   sha256sum -c checksum_target.txt
 )
 
-echo "[3/6] Instalando pacote Headscale..."
+echo "[3/6] Instalando pacote Vereda..."
 dpkg -i "${TMP_DIR}/${DEB_FILE}"
 
 echo "[4/6] Preparando diretorios e permissoes seguras..."
-install -d -m 0750 -o headscale -g headscale /etc/headscale
-install -d -m 0700 -o headscale -g headscale /var/lib/headscale
+id -u vereda >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin vereda
+install -d -m 0750 -o vereda -g vereda /etc/vereda
+install -d -m 0700 -o vereda -g vereda /var/lib/vereda
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_CONFIG_EXAMPLE="${SCRIPT_DIR}/../config/config.yaml.example"
 
-echo "[5/6] Aplicando configuracao /etc/headscale/config.yaml (SQLite3)..."
-if [[ -f /etc/headscale/config.yaml ]]; then
-  cp /etc/headscale/config.yaml "/etc/headscale/config.yaml.bak.$(date +%Y%m%d%H%M%S)"
+echo "[5/6] Aplicando configuracao /etc/vereda/config.yaml (SQLite3)..."
+if [[ -f /etc/vereda/config.yaml ]]; then
+  cp /etc/vereda/config.yaml "/etc/vereda/config.yaml.bak.$(date +%Y%m%d%H%M%S)"
 fi
 
 if [[ -f "${REPO_CONFIG_EXAMPLE}" ]]; then
-  cp "${REPO_CONFIG_EXAMPLE}" /etc/headscale/config.yaml
-  sed -i "s|^server_url:.*|server_url: https://${VEREDA_DOMAIN}|" /etc/headscale/config.yaml
-  sed -i "s|base_domain:.*|base_domain: ${VEREDA_BASE_DOMAIN}|" /etc/headscale/config.yaml
+  cp "${REPO_CONFIG_EXAMPLE}" /etc/vereda/config.yaml
+  sed -i "s|^server_url:.*|server_url: https://${VEREDA_DOMAIN}|" /etc/vereda/config.yaml
+  sed -i "s|base_domain:.*|base_domain: ${VEREDA_BASE_DOMAIN}|" /etc/vereda/config.yaml
 else
-  cat > /etc/headscale/config.yaml <<EOF
+  cat > /etc/vereda/config.yaml <<EOF
 server_url: https://${VEREDA_DOMAIN}
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 127.0.0.1:9090
 
-private_key_path: /var/lib/headscale/private.key
+private_key_path: /var/lib/vereda/private.key
 noise:
-  private_key_path: /var/lib/headscale/noise_private.key
+  private_key_path: /var/lib/vereda/noise_private.key
 
 prefixes:
   v4: 100.64.0.0/10
@@ -123,14 +125,14 @@ derp:
   server:
     enabled: false
   urls:
-    - https://controlplane.tailscale.com/derpmap/default
+    - https://${VEREDA_DOMAIN}/derpmap/default
   auto_update_enabled: true
   update_frequency: 24h
 
 database:
   type: sqlite
   sqlite:
-    path: /var/lib/headscale/db.sqlite
+    path: /var/lib/vereda/db.sqlite
 
 dns:
   magic_dns: true
@@ -142,8 +144,8 @@ dns:
 EOF
 fi
 
-chown headscale:headscale /etc/headscale/config.yaml
-chmod 0600 /etc/headscale/config.yaml
+chown vereda:vereda /etc/vereda/config.yaml
+chmod 0600 /etc/vereda/config.yaml
 
 if command -v ufw >/dev/null 2>&1; then
   echo "[INFO] Configurando regras basicas de firewall UFW (HTTPS 443 + WireGuard/DERP 41641/udp)..."
@@ -151,30 +153,30 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow 41641/udp comment "Vereda WireGuard Mesh" >/dev/null || true
 fi
 
-echo "[6/6] Iniciando servico systemd headscale..."
+echo "[6/6] Iniciando servico systemd vereda..."
 systemctl daemon-reload
-systemctl enable headscale
-systemctl restart headscale
+systemctl enable vereda
+systemctl restart vereda
 
 sleep 2
-if ! systemctl is-active --quiet headscale; then
-  echo "[ERRO] Servico headscale nao iniciou corretamente. Verifique: journalctl -u headscale -n 50" >&2
+if ! systemctl is-active --quiet vereda; then
+  echo "[ERRO] Servico vereda nao iniciou corretamente. Verifique: journalctl -u vereda -n 50" >&2
   exit 1
 fi
 
-headscale users create "${VEREDA_USER}" >/dev/null 2>&1 || true
+vereda users create "${VEREDA_USER}" >/dev/null 2>&1 || true
 
 echo ""
 echo "========================================================================"
-echo " Vereda Headscale instalado e ativo!"
+echo " Vereda instalado e ativo!"
 echo " Dominio: https://${VEREDA_DOMAIN}"
-echo " Banco SQLite3: /var/lib/headscale/db.sqlite"
+echo " Banco SQLite3: /var/lib/vereda/db.sqlite"
 echo " Usuario/Namespace inicial: ${VEREDA_USER}"
 echo "------------------------------------------------------------------------"
 echo " Proximos passos recomendados:"
 echo " 1. Configure proxy reverso TLS (Nginx/Caddy) encaminhando 443 -> 127.0.0.1:8080"
 echo " 2. Gere uma Pre-Auth Key:"
-echo "    headscale preauthkeys create --user ${VEREDA_USER} --reusable --expiration 24h"
+echo "    vereda preauthkeys create --user ${VEREDA_USER} --reusable --expiration 24h"
 echo " 3. Liste nos conectados:"
-echo "    headscale nodes list"
+echo "    vereda nodes list"
 echo "========================================================================"

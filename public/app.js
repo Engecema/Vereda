@@ -212,7 +212,7 @@
         node.hostname,
         node.role,
         node.os,
-        node.tailscaleIp,
+        node.veredaIp,
         node.endpoint,
         ...(node.advertisedRoutes || [])
       ].join(' ').toLowerCase();
@@ -241,7 +241,7 @@
       // Col 2: IP Privado
       const tdIp = document.createElement('td');
       tdIp.className = 'mono';
-      tdIp.textContent = node.tailscaleIp;
+      tdIp.textContent = node.veredaIp;
 
       // Col 3: Rotas & Endpoint
       const tdRoutes = document.createElement('td');
@@ -360,11 +360,11 @@
       const psAuth = authKey ? ` -AuthKey "${authKey}"` : '';
       cmd = `# Execute no PowerShell como Administrador (Windows 10/11)\n.\\scripts\\conectar_windows.ps1 -ServerUrl "${serverUrl}" -Hostname "${hostname}"${psAuth}`;
     } else if (state.cmdTarget === 'linux') {
-      cmd = `# Instalar Headscale na VPS Ubuntu/Debian:\nsudo bash scripts/instalar_vereda_vps.sh\n\n# Conectar servidor Linux cliente ao tunel Vereda:\nsudo tailscale up --login-server=${serverUrl} --hostname=${hostname} --accept-routes --accept-dns=true${authFlag}`;
+      cmd = `# Instalar Vereda na VPS Ubuntu/Debian:\nsudo bash scripts/instalar_vereda_vps.sh\n\n# Conectar servidor Linux cliente ao tunel Vereda:\nsudo vereda up --login-server=${serverUrl} --hostname=${hostname} --accept-routes --accept-dns=true${authFlag}`;
     } else if (state.cmdTarget === 'datacenter') {
-      cmd = `# Habilitar encaminhamento IP no Gateway do Data Center Local:\necho 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.d/99-vereda.conf\nsudo sysctl -p /etc/sysctl.d/99-vereda.conf\n\n# Anunciar sub-rede do Data Center Local na malha:\nsudo tailscale up --login-server=${serverUrl} --hostname=${hostname} --advertise-routes=${route} --accept-routes${authFlag}`;
+      cmd = `# Habilitar encaminhamento IP no Gateway do Data Center Local:\necho 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.d/99-vereda.conf\nsudo sysctl -p /etc/sysctl.d/99-vereda.conf\n\n# Anunciar sub-rede do Data Center Local na malha:\nsudo vereda up --login-server=${serverUrl} --hostname=${hostname} --advertise-routes=${route} --accept-routes${authFlag}`;
     } else {
-      cmd = `# Comandos administrativos na VPS Headscale:\nsudo headscale users list\nsudo headscale preauthkeys create --user engecema --reusable --expiration 24h\nsudo headscale nodes list\nsudo headscale routes list`;
+      cmd = `# Comandos administrativos na VPS Vereda:\nsudo vereda users list\nsudo vereda preauthkeys create --user engecema --reusable --expiration 24h\nsudo vereda nodes list\nsudo vereda routes list`;
     }
 
     document.getElementById('command-output').textContent = cmd;
@@ -493,8 +493,21 @@
     }
   }
 
-  function handleDownloadScript(scriptName) {
-    window.location.href = `/api/scripts/${encodeURIComponent(scriptName)}?download=1`;
+  async function handleDownloadScript(scriptName) {
+    try {
+      const content = await apiRequest(`/api/scripts/${encodeURIComponent(scriptName)}`);
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = scriptName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      showNotice('dash-feedback', err.message, 'error');
+    }
   }
 
   // ============================================================================

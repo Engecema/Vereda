@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vereda — Rede Privada Engecema</title>
-  <meta name="description" content="Painel administrativo e monitoramento da rede privada criptografada Vereda (Headscale + SQLite3) da Engecema." />
+  <meta name="description" content="Painel administrativo e monitoramento da rede privada criptografada Vereda (Motor Vereda + SQLite3) da Engecema." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -24,7 +24,7 @@
       <header class="auth-header">
         <p class="auth-kicker">Engecema Infraestrutura</p>
         <h1 class="auth-title">Projeto Vereda</h1>
-        <p class="auth-subtitle">Rede privada criptografada Headscale interligando o Data Center Local aos servidores VPS.</p>
+        <p class="auth-subtitle">Rede privada criptografada Vereda interligando o Data Center Local aos servidores VPS.</p>
       </header>
 
       <div id="auth-bootstrap-banner" class="notice-banner notice-warning hidden" role="status">
@@ -148,7 +148,7 @@
       <section class="hero-summary" aria-label="Resumo operacional do túnel">
         <div class="hero-copy">
           <p class="hero-eyebrow">Engecema Rede Privada Criptografada</p>
-          <h1 class="hero-title">Monitoramento da Malha Headscale</h1>
+          <h1 class="hero-title">Monitoramento da Malha Vereda</h1>
           <p id="tunnel-meta-line" class="hero-meta">Carregando configuração do túnel...</p>
         </div>
 
@@ -156,7 +156,7 @@
           <div class="kpi-cell">
             <span class="kpi-label">Status do Túnel</span>
             <strong id="kpi-tunnel-status" class="kpi-value">--</strong>
-            <span id="kpi-engine" class="kpi-sub">Headscale + SQLite3</span>
+            <span id="kpi-engine" class="kpi-sub">Motor Vereda + SQLite3</span>
           </div>
           <div class="kpi-cell">
             <span class="kpi-label">Nós Online</span>
@@ -271,7 +271,7 @@
 
         <div class="split-2col">
           <div class="surface-panel">
-            <h3 class="panel-subheading">1. Emitir Chave Pre-Auth (Headscale)</h3>
+            <h3 class="panel-subheading">1. Emitir Chave Pre-Auth (Vereda)</h3>
             <form id="preauth-form" class="stacked-form" novalidate>
               <div class="form-grid-2">
                 <div class="field-group">
@@ -318,7 +318,7 @@
               <button type="button" class="seg-tab active" data-cmd-target="windows">Windows 10</button>
               <button type="button" class="seg-tab" data-cmd-target="linux">Linux / VPS</button>
               <button type="button" class="seg-tab" data-cmd-target="datacenter">Data Center Local</button>
-              <button type="button" class="seg-tab" data-cmd-target="headscale">Headscale CLI</button>
+              <button type="button" class="seg-tab" data-cmd-target="vereda">Vereda CLI</button>
             </div>
 
             <div class="form-grid-2 cmd-inputs">
@@ -350,13 +350,13 @@
         <div class="section-header">
           <div>
             <h2 class="section-heading">Scripts de Provisionamento Vereda</h2>
-            <p class="section-sub">Scripts auditados para instalação do coordenador Headscale na VPS e conexão de estações Windows 10.</p>
+            <p class="section-sub">Scripts auditados para instalação do coordenador Vereda na VPS e conexão de estações Windows 10.</p>
           </div>
         </div>
 
         <div class="split-2col">
           <article class="surface-panel">
-            <h3 class="panel-subheading">VPS Ubuntu / Debian — Headscale + SQLite3</h3>
+            <h3 class="panel-subheading">VPS Ubuntu / Debian — Vereda + SQLite3</h3>
             <p class="muted-text">Arquivo: <span class="mono">scripts/instalar_vereda_vps.sh</span> · Verifica SHA-256 do pacote oficial, aplica <span class="mono">config.yaml</span>, configura UFW e ativa o serviço systemd.</p>
             <div class="button-row">
               <button type="button" class="btn btn-primary" data-preview-script="instalar_vereda_vps.sh">Visualizar Script</button>
@@ -365,7 +365,7 @@
           </article>
 
           <article class="surface-panel">
-            <h3 class="panel-subheading">Windows 10 — Cliente Tailscale Engecema</h3>
+            <h3 class="panel-subheading">Windows 10 — Cliente Vereda Engecema</h3>
             <p class="muted-text">Arquivo: <span class="mono">scripts/conectar_windows.ps1</span> · Instala o cliente se necessário, grava a política de LoginURL e conecta via TLS 1.2 ao servidor Vereda.</p>
             <div class="button-row">
               <button type="button" class="btn btn-primary" data-preview-script="conectar_windows.ps1">Visualizar Script</button>
@@ -435,6 +435,14 @@
       </section>
     </main>
   </div>
+
+  <footer class="site-footer">
+    <div class="site-footer-inner">
+      <span>Corporação Engecema</span>
+      <span aria-hidden="true">·</span>
+      <span>Projeto Vereda</span>
+    </div>
+  </footer>
 
   <script src="/app.js"></script>
 </body>

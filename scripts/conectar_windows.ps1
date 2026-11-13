@@ -4,7 +4,7 @@
 .SYNOPSIS
   Conecta um cliente Windows 10/11 ao servidor VPN Mesh Vereda (Engecema).
 .DESCRIPTION
-  Script leve para registrar o servidor de controle Headscale da Engecema
+  Script leve para registrar o servidor de controle Vereda da Engecema
   e conectar a estacao Windows ao tunel privado criptografado.
 #>
 [CmdletBinding()]
@@ -23,11 +23,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+} catch {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 # Validacao rigorosa de parametros contra injecao
 $parsedUri = $null
-if (-not [Uri]::TryCreate($ServerUrl, [UriKind]::Absolute, [ref]$parsedUri) -or $parsedUri.Scheme -ne "https") {
+if (-not [Uri]::TryCreate($ServerUrl, [UriKind]::Absolute, [ref]$parsedUri) -or $parsedUri.Scheme -ne "https" -or -not [string]::IsNullOrEmpty($parsedUri.UserInfo)) {
   throw "ServerUrl invalida. Informe uma URL HTTPS valida (ex.: https://engecema.com.br)."
 }
 
@@ -40,11 +44,11 @@ if (-not [string]::IsNullOrWhiteSpace($AuthKey) -and ($AuthKey -notmatch '^[a-zA
   throw "Formato de AuthKey invalido."
 }
 
-function Get-TailscaleBinary {
-  $cmd = Get-Command tailscale -ErrorAction SilentlyContinue
+function Get-VeredaBinary {
+  $cmd = Get-Command vereda -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
 
-  $defaultPath = Join-Path $env:ProgramFiles "Tailscale\tailscale.exe"
+  $defaultPath = Join-Path $env:ProgramFiles "Vereda\vereda.exe"
   if (Test-Path $defaultPath) { return $defaultPath }
 
   return $null
@@ -52,36 +56,41 @@ function Get-TailscaleBinary {
 
 Write-Host "=== Vereda Mesh VPN — Conexao Windows 10 (Engecema) ===" -ForegroundColor Yellow
 
-$tailscaleExe = Get-TailscaleBinary
-if (-not $tailscaleExe) {
-  Write-Host "[1/3] Cliente Tailscale nao encontrado. Iniciando instalacao segura..." -ForegroundColor Cyan
+$veredaExe = Get-VeredaBinary
+if (-not $veredaExe) {
+  Write-Host "[1/3] Cliente Vereda nao encontrado. Iniciando instalacao segura..." -ForegroundColor Cyan
   $winget = Get-Command winget -ErrorAction SilentlyContinue
   if ($winget) {
-    & winget install --id Tailscale.Tailscale --exact --silent --accept-source-agreements --accept-package-agreements
+    & winget install --id Engecema.Vereda --exact --silent --accept-source-agreements --accept-package-agreements
   } else {
-    $msiPath = Join-Path $env:TEMP "tailscale-setup-vereda.msi"
-    Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $msiPath -UseBasicParsing
+    $msiPath = Join-Path $env:TEMP "vereda-setup-latest-amd64.msi"
+    Invoke-WebRequest -Uri "https://engecema.com.br/downloads/vereda-setup-latest-amd64.msi" -OutFile $msiPath -UseBasicParsing
+    $sig = Get-AuthenticodeSignature -FilePath $msiPath
+    if ($sig.Status -ne "Valid") {
+      Remove-Item -Path $msiPath -Force -ErrorAction SilentlyContinue
+      throw "Assinatura digital do instalador Vereda invalida ou ausente. Abortando por seguranca."
+    }
     Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$msiPath`"", "/quiet", "/norestart" -Wait
     Remove-Item -Path $msiPath -Force -ErrorAction SilentlyContinue
   }
 
-  $tailscaleExe = Get-TailscaleBinary
-  if (-not $tailscaleExe) {
-    throw "Nao foi possivel localizar tailscale.exe apos a instalacao."
+  $veredaExe = Get-VeredaBinary
+  if (-not $veredaExe) {
+    throw "Nao foi possivel localizar vereda.exe apos a instalacao."
   }
 } else {
-  Write-Host "[1/3] Cliente Tailscale detectado em: $tailscaleExe" -ForegroundColor Green
+  Write-Host "[1/3] Cliente Vereda detectado em: $veredaExe" -ForegroundColor Green
 }
 
-# Garante servico Tailscale em execucao
-$svc = Get-Service -Name "Tailscale" -ErrorAction SilentlyContinue
+# Garante servico Vereda em execucao
+$svc = Get-Service -Name "Vereda" -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -ne "Running") {
-  Start-Service -Name "Tailscale"
+  Start-Service -Name "Vereda"
 }
 
-# Configura politica de servidor Headscale no Registro do Windows
+# Configura politica de servidor Vereda no Registro do Windows
 Write-Host "[2/3] Configurando servidor de controle Vereda ($ServerUrl)..." -ForegroundColor Cyan
-$regPath = "HKLM:\SOFTWARE\Tailscale IPN"
+$regPath = "HKLM:\SOFTWARE\Vereda IPN"
 if (-not (Test-Path $regPath)) {
   New-Item -Path $regPath -Force | Out-Null
 }
@@ -105,14 +114,14 @@ if (-not [string]::IsNullOrWhiteSpace($AuthKey)) {
 }
 
 Write-Host "[3/3] Conectando no tunel privado Engecema como '$cleanHostname'..." -ForegroundColor Cyan
-& $tailscaleExe @argsList
+& $veredaExe @argsList
 
 if ($LASTEXITCODE -ne 0) {
-  throw "Falha ao executar tailscale up (codigo $LASTEXITCODE)."
+  throw "Falha ao executar vereda up (codigo $LASTEXITCODE)."
 }
 
 Write-Host ""
 Write-Host "Conexao estabelecida com sucesso!" -ForegroundColor Green
-& $tailscaleExe status
+& $veredaExe status
 Write-Host "IP privado na rede Vereda:" -ForegroundColor Yellow
-& $tailscaleExe ip -4
+& $veredaExe ip -4

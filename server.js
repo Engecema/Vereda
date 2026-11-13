@@ -20,7 +20,7 @@ const CONFIG_EXAMPLE_PATH = path.join(__dirname, 'config', 'config.yaml.example'
 const ALLOWED_SCRIPTS = new Map([
   ['instalar_vereda_vps.sh', {
     filePath: path.join(__dirname, 'scripts', 'instalar_vereda_vps.sh'),
-    contentType: 'text/x-shellscript; charset=utf-8'
+    contentType: 'text/plain; charset=utf-8'
   }],
   ['conectar_windows.ps1', {
     filePath: path.join(__dirname, 'scripts', 'conectar_windows.ps1'),
@@ -49,7 +49,7 @@ function getSessionSecret() {
 
 const SESSION_SECRET = getSessionSecret();
 
-function loadHeadscaleConfig() {
+function loadVeredaConfig() {
   const defaults = {
     serverUrl: process.env.VEREDA_SERVER_URL || 'https://engecema.com.br',
     listenAddr: '0.0.0.0:8080',
@@ -57,7 +57,7 @@ function loadHeadscaleConfig() {
     ipv4Prefix: '100.64.0.0/10',
     ipv6Prefix: 'fd7a:115c:a1e0::/48',
     databaseType: 'sqlite',
-    databasePath: '/var/lib/headscale/db.sqlite',
+    databasePath: '/var/lib/vereda/db.sqlite',
     magicDns: true,
     baseDomain: process.env.VEREDA_BASE_DOMAIN || 'engecema.internal',
     nameservers: ['1.1.1.1', '9.9.9.9']
@@ -87,7 +87,7 @@ function loadHeadscaleConfig() {
   }
 }
 
-const HEADSCALE_CONFIG = loadHeadscaleConfig();
+const VEREDA_CONFIG = loadVeredaConfig();
 
 function createInitialStore() {
   const now = new Date().toISOString();
@@ -103,7 +103,7 @@ function createInitialStore() {
         role: 'VPS Coordenadora',
         environment: 'vps',
         os: 'Ubuntu 24.04 LTS',
-        tailscaleIp: '100.64.0.1',
+        veredaIp: '100.64.0.1',
         endpoint: 'engecema.com.br:41641',
         advertisedRoutes: [],
         status: 'online',
@@ -117,7 +117,7 @@ function createInitialStore() {
         role: 'Data Center Local',
         environment: 'datacenter',
         os: 'Debian 12 (Gateway)',
-        tailscaleIp: '100.64.0.2',
+        veredaIp: '100.64.0.2',
         endpoint: '189.40.12.88:41641',
         advertisedRoutes: ['192.168.10.0/24', '10.20.0.0/16'],
         status: 'online',
@@ -131,7 +131,7 @@ function createInitialStore() {
         role: 'Data Center Local',
         environment: 'datacenter',
         os: 'Ubuntu 22.04 LTS',
-        tailscaleIp: '100.64.0.3',
+        veredaIp: '100.64.0.3',
         endpoint: '189.40.12.88:41642',
         advertisedRoutes: [],
         status: 'online',
@@ -145,7 +145,7 @@ function createInitialStore() {
         role: 'Estação Windows 10',
         environment: 'workstation',
         os: 'Windows 10 Pro',
-        tailscaleIp: '100.64.0.10',
+        veredaIp: '100.64.0.10',
         endpoint: '201.18.94.15:41641',
         advertisedRoutes: [],
         status: 'offline',
@@ -161,7 +161,7 @@ function createInitialStore() {
         event: 'SYSTEM_BOOT',
         actor: 'sistema',
         ip: '127.0.0.1',
-        detail: 'Painel Vereda inicializado com configuracao Headscale + SQLite3.'
+        detail: 'Painel Vereda inicializado com configuracao Vereda + SQLite3.'
       }
     ]
   };
@@ -176,14 +176,16 @@ function loadStore() {
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
-    if (!parsed || typeof parsed !== 'object') {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('Invalid store');
     }
     parsed.admins = Array.isArray(parsed.admins) ? parsed.admins : [];
     parsed.invites = Array.isArray(parsed.invites) ? parsed.invites : [];
     parsed.revokedSessions = parsed.revokedSessions && typeof parsed.revokedSessions === 'object' ? parsed.revokedSessions : {};
     parsed.preauthKeys = Array.isArray(parsed.preauthKeys) ? parsed.preauthKeys : [];
-    parsed.nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+    parsed.nodes = Array.isArray(parsed.nodes)
+      ? parsed.nodes.map((n) => ({ ...n, veredaIp: n.veredaIp || '100.64.0.1' }))
+      : [];
     parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
     return parsed;
   } catch {
@@ -193,10 +195,10 @@ function loadStore() {
   }
 }
 
-function saveStore(store) {
+function saveStore(targetStore) {
   ensureSecureStorage();
   const tmpPath = `${STORE_PATH}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(store, null, 2), { mode: 0o600 });
+  fs.writeFileSync(tmpPath, JSON.stringify(targetStore, null, 2), { mode: 0o600 });
   fs.renameSync(tmpPath, STORE_PATH);
 }
 
@@ -221,6 +223,8 @@ function appendAudit(event, actor, ip, detail) {
 // Security Helpers: Hashing, Tokens, Sanitization, Validation, Rate Limiting
 // ==============================================================================
 
+const DUMMY_PASSWORD_HASH = `${'0'.repeat(32)}:${'0'.repeat(128)}`;
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const derived = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString('hex');
@@ -228,9 +232,10 @@ function hashPassword(password) {
 }
 
 function verifyPassword(password, storedHash) {
+  if (typeof password !== 'string' || password.length === 0 || password.length > 128) return false;
   if (typeof storedHash !== 'string' || !storedHash.includes(':')) return false;
   const [salt, expectedHex] = storedHash.split(':');
-  if (!salt || !expectedHex) return false;
+  if (!salt || !expectedHex || salt.length !== 32 || expectedHex.length !== 128) return false;
   const derived = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
   const expected = Buffer.from(expectedHex, 'hex');
   if (derived.length !== expected.length) return false;
@@ -241,9 +246,18 @@ function sha256Hex(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
+function getUserAgentFingerprint(req) {
+  const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+  return sha256Hex(ua).slice(0, 16);
+}
+
 function generateRecoveryKey() {
   const bytes = crypto.randomBytes(12).toString('hex').toUpperCase();
   return `VRD-${bytes.slice(0, 4)}-${bytes.slice(4, 8)}-${bytes.slice(8, 12)}-${bytes.slice(12, 16)}-${bytes.slice(16, 20)}-${bytes.slice(20, 24)}`;
+}
+
+function isValidRecoveryKeyFormat(key) {
+  return typeof key === 'string' && /^VRD-[A-F0-9]{4}(-[A-F0-9]{4}){5}$/.test(key);
 }
 
 function normalizeEmail(email) {
@@ -272,11 +286,19 @@ function validateStrongPassword(password) {
 
 function sanitizeText(value, maxLen = 80) {
   if (typeof value !== 'string') return '';
-  return value.replace(/[\u0000-\u001F\u007F<>]/g, '').trim().slice(0, maxLen);
+  return value.replace(/[\u0000-\u001F\u007F<>`$\\]/g, '').trim().slice(0, maxLen);
 }
 
 function isValidHostname(hostname) {
   return typeof hostname === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]$/.test(hostname);
+}
+
+function isValidNodeId(id) {
+  return typeof id === 'string' && /^node-[a-zA-Z0-9-]{4,58}$/.test(id);
+}
+
+function isValidEndpoint(endpoint) {
+  return typeof endpoint === 'string' && /^[a-zA-Z0-9.:/ _\u00C0-\u017F-]{2,80}$/.test(endpoint);
 }
 
 function isValidCidr(cidr) {
@@ -288,21 +310,22 @@ function isValidCidr(cidr) {
   return octets.every((o) => o >= 0 && o <= 255) && mask >= 8 && mask <= 32;
 }
 
-function allocateNextTailscaleIp() {
-  const used = new Set(store.nodes.map((n) => n.tailscaleIp));
+function allocateNextVeredaIp() {
+  const used = new Set(store.nodes.map((n) => n.veredaIp));
   for (let i = 4; i <= 250; i += 1) {
     const candidate = `100.64.0.${i}`;
     if (!used.has(candidate)) return candidate;
   }
-  return `100.64.1.${Math.floor(Math.random() * 200) + 10}`;
+  return `100.64.1.${crypto.randomInt(10, 240)}`;
 }
 
-function signSessionToken(admin) {
+function signSessionToken(admin, req) {
   const nowSec = Math.floor(Date.now() / 1000);
   const payload = {
     sid: crypto.randomUUID(),
     uid: admin.id,
     ver: admin.tokenVersion || 1,
+    uah: getUserAgentFingerprint(req),
     iat: nowSec,
     exp: nowSec + 60 * 60 * 8 // 8 hours
   };
@@ -311,8 +334,8 @@ function signSessionToken(admin) {
   return { token: `${payloadB64}.${sig}`, payload };
 }
 
-function verifySessionToken(token) {
-  if (typeof token !== 'string' || !token.includes('.')) return null;
+function verifySessionToken(token, req) {
+  if (typeof token !== 'string' || token.length > 512 || !token.includes('.')) return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
   const [payloadB64, sigB64] = parts;
@@ -324,8 +347,10 @@ function verifySessionToken(token) {
   try {
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
     const nowSec = Math.floor(Date.now() / 1000);
+    if (!payload || typeof payload !== 'object') return null;
     if (!payload.sid || !payload.uid || !payload.exp || payload.exp < nowSec) return null;
     if (store.revokedSessions[payload.sid]) return null;
+    if (payload.uah && payload.uah !== getUserAgentFingerprint(req)) return null;
     const admin = store.admins.find((u) => u.id === payload.uid);
     if (!admin) return null;
     if ((admin.tokenVersion || 1) !== payload.ver) return null;
@@ -336,14 +361,20 @@ function verifySessionToken(token) {
 }
 
 function parseCookies(cookieHeader) {
-  const result = {};
-  if (typeof cookieHeader !== 'string') return result;
+  const result = Object.create(null);
+  if (typeof cookieHeader !== 'string' || cookieHeader.length > 4096) return result;
   for (const part of cookieHeader.split(';')) {
     const idx = part.indexOf('=');
     if (idx === -1) continue;
     const key = part.slice(0, idx).trim();
     const val = part.slice(idx + 1).trim();
-    if (key) result[key] = decodeURIComponent(val);
+    if (key && key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
+      try {
+        result[key] = decodeURIComponent(val);
+      } catch {
+        // Ignore malformed cookie encoding
+      }
+    }
   }
   return result;
 }
@@ -351,9 +382,9 @@ function parseCookies(cookieHeader) {
 function buildCookieFlags(req, httpOnly = true, maxAgeSec = 60 * 60 * 8) {
   const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
   const parts = [
-    `Path=/`,
+    'Path=/',
     `Max-Age=${maxAgeSec}`,
-    `SameSite=Lax`
+    'SameSite=Lax'
   ];
   if (httpOnly) parts.push('HttpOnly');
   if (isHttps) parts.push('Secure');
@@ -374,17 +405,22 @@ function clearAuthCookies(req, res) {
   ]);
 }
 
-// Sliding-window in-memory rate limiter
+// Bounded sliding-window in-memory rate limiter (anti-brute-force & anti-OOM)
+const MAX_RATE_BUCKETS = 10000;
 const rateBuckets = new Map();
 setInterval(() => {
-  const cutoff = Date.now() - 1000 * 60 * 20;
+  const now = Date.now();
   for (const [key, entry] of rateBuckets.entries()) {
-    if (entry.resetAt < cutoff) rateBuckets.delete(key);
+    if (entry.resetAt < now) rateBuckets.delete(key);
   }
 }, 1000 * 60 * 5).unref();
 
 function checkRateLimit(bucketKey, maxAttempts, windowMs) {
   const now = Date.now();
+  if (rateBuckets.size >= MAX_RATE_BUCKETS && !rateBuckets.has(bucketKey)) {
+    const firstKey = rateBuckets.keys().next().value;
+    if (firstKey) rateBuckets.delete(firstKey);
+  }
   const current = rateBuckets.get(bucketKey);
   if (!current || current.resetAt <= now) {
     rateBuckets.set(bucketKey, { count: 1, resetAt: now + windowMs });
@@ -401,6 +437,10 @@ function getClientIp(req) {
   return (req.ip || req.socket?.remoteAddress || '127.0.0.1').slice(0, 64);
 }
 
+function isPlainObject(val) {
+  return Boolean(val) && typeof val === 'object' && !Array.isArray(val);
+}
+
 // ==============================================================================
 // Express App & Hardening Middleware
 // ==============================================================================
@@ -414,6 +454,10 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  res.setHeader('X-Download-Options', 'noopen');
   res.setHeader('Cache-Control', req.path.startsWith('/api/') ? 'no-store' : 'no-cache');
   res.setHeader(
     'Content-Security-Policy',
@@ -444,7 +488,7 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-// Global API rate limit
+// Global API rate limit & plain object guard
 app.use('/api/', (req, res, next) => {
   const ip = getClientIp(req);
   const limit = checkRateLimit(`global:${ip}`, 180, 60 * 1000);
@@ -452,25 +496,54 @@ app.use('/api/', (req, res, next) => {
     res.setHeader('Retry-After', String(limit.retryAfterSec));
     return res.status(429).json({ error: 'Muitas requisições. Aguarde alguns instantes.' });
   }
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    if (!req.is('application/json')) {
+      return res.status(415).json({ error: 'Content-Type deve ser application/json.' });
+    }
+    if (!isPlainObject(req.body)) {
+      return res.status(400).json({ error: 'Corpo JSON inválido.' });
+    }
+  }
   return next();
 });
 
-// Origin/CSRF verification for mutating endpoints
+// Strict Origin / Sec-Fetch-Site verification for mutating endpoints
 function verifySameOrigin(req) {
-  const origin = req.headers.origin;
-  const host = req.headers.host;
-  if (!origin || !host) return true;
-  try {
-    const parsedOrigin = new URL(origin);
-    return parsedOrigin.host === host;
-  } catch {
+  const secFetchSite = req.headers['sec-fetch-site'];
+  if (secFetchSite === 'cross-site') {
     return false;
   }
+
+  const host = req.headers.host;
+  if (!host) return false;
+
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    if (origin === 'null') return false;
+    try {
+      const parsedOrigin = new URL(origin);
+      return parsedOrigin.host === host;
+    } catch {
+      return false;
+    }
+  }
+
+  const referer = req.headers.referer;
+  if (referer !== undefined) {
+    try {
+      const parsedReferer = new URL(referer);
+      return parsedReferer.host === host;
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function requireAuth(req, res, next) {
   const cookies = parseCookies(req.headers.cookie);
-  const verified = verifySessionToken(cookies.vereda_session);
+  const verified = verifySessionToken(cookies.vereda_session, req);
   if (!verified) {
     return res.status(401).json({ error: 'Sessão expirada ou não autenticada.' });
   }
@@ -485,6 +558,7 @@ function requireAuth(req, res, next) {
       typeof headerCsrf !== 'string'
       || typeof cookieCsrf !== 'string'
       || headerCsrf.length < 16
+      || headerCsrf.length > 128
       || headerCsrf.length !== cookieCsrf.length
       || !crypto.timingSafeEqual(Buffer.from(headerCsrf), Buffer.from(cookieCsrf))
     ) {
@@ -502,7 +576,7 @@ function requireAuth(req, res, next) {
 
 app.get('/api/auth/session', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
-  const verified = verifySessionToken(cookies.vereda_session);
+  const verified = verifySessionToken(cookies.vereda_session, req);
   const needsBootstrap = store.admins.length === 0;
 
   if (!verified) {
@@ -542,12 +616,12 @@ app.post('/api/auth/register', (req, res) => {
     return res.status(429).json({ error: `Limite de tentativas excedido. Tente novamente em ${rate.retryAfterSec}s.` });
   }
 
-  const name = sanitizeText(req.body?.name, 80);
-  const email = normalizeEmail(req.body?.email);
-  const role = sanitizeText(req.body?.role, 60) || 'Administrador de Rede';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const confirmPassword = typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : '';
-  const inviteCode = typeof req.body?.inviteCode === 'string' ? req.body.inviteCode.trim() : '';
+  const name = sanitizeText(req.body.name, 80);
+  const email = normalizeEmail(req.body.email);
+  const role = sanitizeText(req.body.role, 60) || 'Administrador de Rede';
+  const password = typeof req.body.password === 'string' ? req.body.password : '';
+  const confirmPassword = typeof req.body.confirmPassword === 'string' ? req.body.confirmPassword : '';
+  const inviteCode = typeof req.body.inviteCode === 'string' ? req.body.inviteCode.trim() : '';
 
   if (name.length < 2) {
     return res.status(400).json({ error: 'Informe o nome completo do administrador.' });
@@ -569,7 +643,7 @@ app.post('/api/auth/register', (req, res) => {
 
   const isBootstrap = store.admins.length === 0;
   if (!isBootstrap) {
-    if (!inviteCode) {
+    if (!inviteCode || inviteCode.length > 64) {
       return res.status(403).json({
         error: 'Código de convite administrativo obrigatório após a configuração inicial.'
       });
@@ -609,7 +683,7 @@ app.post('/api/auth/register', (req, res) => {
     `Administrador cadastrado (${role}).`
   );
 
-  const { token } = signSessionToken(newAdmin);
+  const { token } = signSessionToken(newAdmin, req);
   const csrfToken = crypto.randomBytes(24).toString('hex');
   setAuthCookies(req, res, token, csrfToken);
 
@@ -632,23 +706,28 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(403).json({ error: 'Origem não permitida.' });
   }
   const ip = getClientIp(req);
-  const email = normalizeEmail(req.body?.email);
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const email = normalizeEmail(req.body.email);
+  const password = typeof req.body.password === 'string' ? req.body.password : '';
 
-  const rate = checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000);
-  if (!rate.allowed) {
-    appendAudit('LOGIN_RATE_LIMITED', email || 'desconhecido', ip, 'Bloqueio temporario por excesso de tentativas.');
-    return res.status(429).json({ error: `Muitas tentativas de login. Aguarde ${rate.retryAfterSec}s.` });
+  const ipRate = checkRateLimit(`login-ip:${ip}`, 12, 15 * 60 * 1000);
+  if (!ipRate.allowed) {
+    appendAudit('LOGIN_RATE_LIMITED', email || 'desconhecido', ip, 'Bloqueio por excesso de tentativas no IP.');
+    return res.status(429).json({ error: `Muitas tentativas de login. Aguarde ${ipRate.retryAfterSec}s.` });
   }
 
-  if (!isValidEmail(email) || !password) {
+  if (!isValidEmail(email) || !password || password.length > 128) {
     return res.status(400).json({ error: 'Informe e-mail e senha válidos.' });
+  }
+
+  const emailRate = checkRateLimit(`login-email:${email}`, 8, 15 * 60 * 1000);
+  if (!emailRate.allowed) {
+    appendAudit('LOGIN_EMAIL_RATE_LIMITED', email, ip, 'Bloqueio por excesso de tentativas no e-mail.');
+    return res.status(429).json({ error: `Muitas tentativas para esta conta. Aguarde ${emailRate.retryAfterSec}s.` });
   }
 
   const admin = store.admins.find((a) => a.email === email);
   if (!admin) {
-    // Timing mitigation: execute scrypt dummy check to avoid timing side-channel
-    verifyPassword(password, `${'0'.repeat(32)}:${'0'.repeat(128)}`);
+    verifyPassword(password, DUMMY_PASSWORD_HASH);
     appendAudit('LOGIN_FAILED', email, ip, 'Credenciais invalidas.');
     return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
   }
@@ -678,7 +757,7 @@ app.post('/api/auth/login', (req, res) => {
   admin.lockedUntil = 0;
   appendAudit('LOGIN_SUCCESS', email, ip, 'Sessao administrativa iniciada.');
 
-  const { token } = signSessionToken(admin);
+  const { token } = signSessionToken(admin, req);
   const csrfToken = crypto.randomBytes(24).toString('hex');
   setAuthCookies(req, res, token, csrfToken);
 
@@ -705,13 +784,13 @@ app.post('/api/auth/forgot-password', (req, res) => {
     return res.status(429).json({ error: `Limite de recuperação atingido. Aguarde ${rate.retryAfterSec}s.` });
   }
 
-  const email = normalizeEmail(req.body?.email);
-  const recoveryKey = typeof req.body?.recoveryKey === 'string' ? req.body.recoveryKey.trim().toUpperCase() : '';
-  const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
-  const confirmPassword = typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : '';
+  const email = normalizeEmail(req.body.email);
+  const recoveryKey = typeof req.body.recoveryKey === 'string' ? req.body.recoveryKey.trim().toUpperCase() : '';
+  const newPassword = typeof req.body.newPassword === 'string' ? req.body.newPassword : '';
+  const confirmPassword = typeof req.body.confirmPassword === 'string' ? req.body.confirmPassword : '';
 
-  if (!isValidEmail(email) || !recoveryKey) {
-    return res.status(400).json({ error: 'Informe o e-mail e a chave de recuperação.' });
+  if (!isValidEmail(email) || !isValidRecoveryKeyFormat(recoveryKey)) {
+    return res.status(400).json({ error: 'Informe um e-mail válido e a chave de recuperação no formato VRD-XXXX-...' });
   }
   const pwErr = validateStrongPassword(newPassword);
   if (pwErr) {
@@ -722,8 +801,14 @@ app.post('/api/auth/forgot-password', (req, res) => {
   }
 
   const admin = store.admins.find((a) => a.email === email);
-  if (!admin || !verifyPassword(recoveryKey, admin.recoveryKeyHash)) {
+  if (!admin) {
+    verifyPassword(recoveryKey, DUMMY_PASSWORD_HASH);
     appendAudit('PASSWORD_RESET_DENIED', email, ip, 'Tentativa de redefinicao com e-mail ou chave invalida.');
+    return res.status(401).json({ error: 'E-mail ou chave de recuperação inválidos.' });
+  }
+
+  if (!verifyPassword(recoveryKey, admin.recoveryKeyHash)) {
+    appendAudit('PASSWORD_RESET_DENIED', email, ip, 'Tentativa de redefinicao com chave invalida.');
     return res.status(401).json({ error: 'E-mail ou chave de recuperação inválidos.' });
   }
 
@@ -734,6 +819,7 @@ app.post('/api/auth/forgot-password', (req, res) => {
   admin.failedAttempts = 0;
   admin.lockedUntil = 0;
 
+  clearAuthCookies(req, res);
   appendAudit('PASSWORD_RESET_SUCCESS', email, ip, 'Senha redefinida via chave de recuperacao e sessoes anteriores revogadas.');
 
   return res.json({
@@ -746,7 +832,6 @@ app.post('/api/auth/forgot-password', (req, res) => {
 app.post('/api/auth/logout', requireAuth, (req, res) => {
   const { admin, payload } = req.auth;
   store.revokedSessions[payload.sid] = payload.exp;
-  // Prune expired revocations
   const nowSec = Math.floor(Date.now() / 1000);
   for (const [sid, exp] of Object.entries(store.revokedSessions)) {
     if (exp < nowSec) delete store.revokedSessions[sid];
@@ -768,17 +853,17 @@ app.get('/api/overview', requireAuth, (req, res) => {
   return res.json({
     tunnel: {
       status: onlineCount > 0 ? 'Operacional' : 'Aguardando nós',
-      engine: 'Headscale + SQLite3',
-      serverUrl: HEADSCALE_CONFIG.serverUrl,
-      listenAddr: HEADSCALE_CONFIG.listenAddr,
-      metricsAddr: HEADSCALE_CONFIG.metricsAddr,
-      ipv4Prefix: HEADSCALE_CONFIG.ipv4Prefix,
-      ipv6Prefix: HEADSCALE_CONFIG.ipv6Prefix,
-      databaseType: HEADSCALE_CONFIG.databaseType,
-      databasePath: HEADSCALE_CONFIG.databasePath,
-      magicDns: HEADSCALE_CONFIG.magicDns,
-      baseDomain: HEADSCALE_CONFIG.baseDomain,
-      nameservers: HEADSCALE_CONFIG.nameservers,
+      engine: 'Vereda + SQLite3',
+      serverUrl: VEREDA_CONFIG.serverUrl,
+      listenAddr: VEREDA_CONFIG.listenAddr,
+      metricsAddr: VEREDA_CONFIG.metricsAddr,
+      ipv4Prefix: VEREDA_CONFIG.ipv4Prefix,
+      ipv6Prefix: VEREDA_CONFIG.ipv6Prefix,
+      databaseType: VEREDA_CONFIG.databaseType,
+      databasePath: VEREDA_CONFIG.databasePath,
+      magicDns: VEREDA_CONFIG.magicDns,
+      baseDomain: VEREDA_CONFIG.baseDomain,
+      nameservers: VEREDA_CONFIG.nameservers,
       onlineCount,
       offlineCount,
       totalNodes: nodes.length
@@ -805,25 +890,28 @@ app.get('/api/overview', requireAuth, (req, res) => {
     securityChecks: [
       { id: 'csp', label: 'Content-Security-Policy estrita (sem script-src unsafe-inline)', active: true },
       { id: 'scrypt', label: 'Hashing scrypt com salt criptografico individual + timingSafeEqual', active: true },
-      { id: 'cookies', label: 'Sessao HMAC-SHA256 em cookie HttpOnly + protecao CSRF X-CSRF-Token', active: true },
-      { id: 'ratelimit', label: 'Rate limiting deslizante e bloqueio automatico contra forca bruta', active: true },
+      { id: 'cookies', label: 'Sessao HMAC-SHA256 vinculada ao User-Agent em cookie HttpOnly + CSRF', active: true },
+      { id: 'ratelimit', label: 'Rate limiting duplo (IP + e-mail) e bloqueio automatico contra forca bruta', active: true },
       { id: 'static', label: 'Isolamento de arquivos sensiveis (server.js, config/ e data/ bloqueados)', active: true },
-      { id: 'injection', label: 'Validacao estrita de hostname/CIDR/URL contra command injection e XSS', active: true }
+      { id: 'injection', label: 'Validacao estrita de hostname/CIDR/URL/Content-Type contra injecao e XSS', active: true }
     ]
   });
 });
 
 app.post('/api/nodes', requireAuth, (req, res) => {
-  const hostname = sanitizeText(req.body?.hostname, 63).toLowerCase();
-  const environment = ['vps', 'datacenter', 'workstation'].includes(req.body?.environment)
+  const hostname = sanitizeText(req.body.hostname, 63).toLowerCase();
+  const environment = ['vps', 'datacenter', 'workstation'].includes(req.body.environment)
     ? req.body.environment
     : 'workstation';
-  const osName = sanitizeText(req.body?.os, 50) || 'Linux / Tailscale';
-  const endpoint = sanitizeText(req.body?.endpoint, 80) || 'Registro via Mesh';
-  const routeInput = sanitizeText(req.body?.advertisedRoute, 32);
+  const osName = sanitizeText(req.body.os, 50) || 'Linux / Vereda';
+  const endpoint = sanitizeText(req.body.endpoint, 80) || 'Conexão direta WireGuard';
+  const routeInput = sanitizeText(req.body.advertisedRoute, 32);
 
   if (!isValidHostname(hostname)) {
     return res.status(400).json({ error: 'Hostname inválido. Utilize apenas letras, números e hífen (2 a 63 caracteres).' });
+  }
+  if (!isValidEndpoint(endpoint)) {
+    return res.status(400).json({ error: 'Endpoint contém caracteres não permitidos.' });
   }
   if (store.nodes.some((n) => n.hostname === hostname)) {
     return res.status(409).json({ error: 'Já existe um nó cadastrado com este hostname.' });
@@ -850,7 +938,7 @@ app.post('/api/nodes', requireAuth, (req, res) => {
     role: roleMap[environment],
     environment,
     os: osName,
-    tailscaleIp: allocateNextTailscaleIp(),
+    veredaIp: allocateNextVeredaIp(),
     endpoint,
     advertisedRoutes,
     status: 'online',
@@ -860,19 +948,22 @@ app.post('/api/nodes', requireAuth, (req, res) => {
   };
 
   store.nodes.push(newNode);
-  appendAudit('NODE_CREATED', req.auth.admin.email, getClientIp(req), `No ${hostname} (${newNode.tailscaleIp}) adicionado.`);
+  appendAudit('NODE_CREATED', req.auth.admin.email, getClientIp(req), `No ${hostname} (${newNode.veredaIp}) adicionado.`);
 
   return res.status(201).json({ node: newNode });
 });
 
 app.patch('/api/nodes/:id/status', requireAuth, (req, res) => {
-  const id = sanitizeText(req.params.id, 64);
+  const id = String(req.params.id || '');
+  if (!isValidNodeId(id)) {
+    return res.status(400).json({ error: 'Identificador de nó inválido.' });
+  }
   const node = store.nodes.find((n) => n.id === id);
   if (!node) {
     return res.status(404).json({ error: 'Nó não encontrado.' });
   }
 
-  const nextStatus = req.body?.status === 'offline' ? 'offline' : 'online';
+  const nextStatus = req.body.status === 'offline' ? 'offline' : 'online';
   node.status = nextStatus;
   node.lastSeen = new Date().toISOString();
   node.latencyMs = nextStatus === 'online'
@@ -884,24 +975,27 @@ app.patch('/api/nodes/:id/status', requireAuth, (req, res) => {
 });
 
 app.delete('/api/nodes/:id', requireAuth, (req, res) => {
-  const id = sanitizeText(req.params.id, 64);
+  const id = String(req.params.id || '');
+  if (!isValidNodeId(id)) {
+    return res.status(400).json({ error: 'Identificador de nó inválido.' });
+  }
   const index = store.nodes.findIndex((n) => n.id === id);
   if (index === -1) {
     return res.status(404).json({ error: 'Nó não encontrado.' });
   }
   const [removed] = store.nodes.splice(index, 1);
-  appendAudit('NODE_REMOVED', req.auth.admin.email, getClientIp(req), `No ${removed.hostname} (${removed.tailscaleIp}) revogado.`);
+  appendAudit('NODE_REMOVED', req.auth.admin.email, getClientIp(req), `No ${removed.hostname} (${removed.veredaIp}) revogado.`);
   return res.json({ ok: true });
 });
 
 app.post('/api/preauth-keys', requireAuth, (req, res) => {
-  const user = sanitizeText(req.body?.user, 32).toLowerCase() || 'engecema';
+  const user = sanitizeText(req.body.user, 32).toLowerCase() || 'engecema';
   if (!/^[a-z0-9_-]{2,32}$/.test(user)) {
     return res.status(400).json({ error: 'Namespace/usuário inválido (use apenas letras minúsculas, números, _ ou -).' });
   }
-  const reusable = Boolean(req.body?.reusable);
-  const ephemeral = Boolean(req.body?.ephemeral);
-  const hours = Math.min(Math.max(Number(req.body?.expirationHours) || 24, 1), 720);
+  const reusable = Boolean(req.body.reusable);
+  const ephemeral = Boolean(req.body.ephemeral);
+  const hours = Math.min(Math.max(Number(req.body.expirationHours) || 24, 1), 720);
 
   const rawKey = `vrd_auth_${crypto.randomBytes(20).toString('hex')}`;
   const now = Date.now();
@@ -963,8 +1057,10 @@ app.get('/api/scripts/:name', requireAuth, (req, res) => {
   const content = fs.readFileSync(entry.filePath, 'utf8');
   if (req.query.download === '1') {
     res.setHeader('Content-Disposition', `attachment; filename="${req.params.name}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+  } else {
+    res.setHeader('Content-Type', entry.contentType);
   }
-  res.setHeader('Content-Type', entry.contentType);
   return res.send(content);
 });
 
