@@ -1,0 +1,13 @@
+{
+  "name": "vereda-mesh-vpn",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npx serve .",
+    "build": "echo 'Build Vereda concluido com sucesso'"
+  },
+  "dependencies": {
+    "serve": "^14.2.3"
+  }
+}
