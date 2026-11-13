@@ -1,0 +1,7 @@
+.env
+*.key
+*.pem
+*.sqlite
+*.db
+noise_private.key
+config/config.yaml
